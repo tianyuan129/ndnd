@@ -1,10 +1,18 @@
 package trust_schema_test
 
 import (
+	"crypto/elliptic"
 	"testing"
+	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
+	"github.com/named-data/ndnd/std/ndn"
+	"github.com/named-data/ndnd/std/ndn/spec_2022"
+	"github.com/named-data/ndnd/std/object/storage"
+	"github.com/named-data/ndnd/std/security/keychain"
+	"github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/security/trust_schema"
+	"github.com/named-data/ndnd/std/types/optional"
 	tu "github.com/named-data/ndnd/std/utils/testutils"
 	"github.com/stretchr/testify/require"
 )
@@ -262,4 +270,61 @@ func TestModelComplexCheck(t *testing.T) {
 	require.False(t, s.Check(sname("/a/b/c"), sname("/pqr/pqr/xxx")))
 	require.False(t, s.Check(sname("/a/b/c"), sname("/xxx/pqr")))
 	require.False(t, s.Check(sname("/a/b/c"), sname("/xxx/pqr/rst/uvw")))
+}
+
+func TestSuggestSkipsExpiredCert(t *testing.T) {
+	tu.SetT(t)
+
+	// Schema from TEST_MODEL expects admin to sign author.
+	s, err := trust_schema.NewLvsSchema(TEST_MODEL)
+	require.NoError(t, err)
+
+	store := storage.NewMemoryStore()
+	kc := keychain.NewKeyChainMem(store)
+
+	keyName := sname("/a/blog/admin/000001/KEY/1")
+	signerObj, err := signer.KeygenEcc(keyName, elliptic.P256())
+	require.NoError(t, err)
+	require.NoError(t, kc.InsertKey(signerObj))
+
+	issuer := enc.NewGenericComponent("self")
+	baseCertName := keyName.Append(issuer)
+
+	// Seed keychain with a valid cert so UniqueCerts contains the prefix.
+	validCert1 := buildCert(t, signerObj, baseCertName.Append(enc.NewVersionComponent(1)), time.Now().Add(time.Hour))
+	require.NoError(t, kc.InsertCert(validCert1.Wire.Join()))
+
+	// Latest version is expired -> Suggest should return nil.
+	expiredName := baseCertName.Append(enc.NewVersionComponent(2))
+	expiredCert := buildCert(t, signerObj, expiredName, time.Now().Add(-time.Hour))
+	require.NoError(t, store.Put(expiredName, expiredCert.Wire.Join()))
+	pkt := sname("/a/blog/author/100001/KEY/1/000001/1")
+	require.Nil(t, s.Suggest(pkt, kc))
+
+	// Newer valid version -> Suggest should pick it.
+	validName := baseCertName.Append(enc.NewVersionComponent(3))
+	validCert2 := buildCert(t, signerObj, validName, time.Now().Add(time.Hour))
+	require.NoError(t, store.Put(validName, validCert2.Wire.Join()))
+
+	sugg := s.Suggest(pkt, kc)
+	require.NotNil(t, sugg)
+	require.Equal(t, baseCertName, sugg.KeyLocator())
+}
+
+func buildCert(t *testing.T, signer ndn.Signer, name enc.Name, notAfter time.Time) *ndn.EncodedData {
+	t.Helper()
+
+	pub, err := signer.Public()
+	require.NoError(t, err)
+
+	cfg := &ndn.DataConfig{
+		ContentType:  optional.Some(ndn.ContentTypeKey),
+		SigNotBefore: optional.Some(time.Now().Add(-time.Hour)),
+		SigNotAfter:  optional.Some(notAfter),
+	}
+
+	data, err := spec_2022.Spec{}.MakeData(name, cfg, enc.Wire{pub}, signer)
+	require.NoError(t, err)
+
+	return data
 }

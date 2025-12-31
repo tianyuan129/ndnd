@@ -7,9 +7,11 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/ndn"
+	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 	sig "github.com/named-data/ndnd/std/security/signer"
 )
 
@@ -227,7 +229,23 @@ func (s *LvsSchema) Suggest(pkt enc.Name, keychain ndn.KeyChain) ndn.Signer {
 			for _, key := range id.Keys() {
 				for _, cert := range key.UniqueCerts() {
 					for keyNode := range s.Match(cert, pktCtx) {
-						if s.checkSigner(pktNode, keyNode) {
+						if !s.checkSigner(pktNode, keyNode) {
+							continue
+						}
+
+						// Load the real cert
+						wire, err := keychain.Store().Get(cert.Prefix(-1), true)
+						if err != nil || wire == nil {
+							continue
+						}
+
+						certData, _, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{wire}))
+						if err != nil {
+							continue
+						}
+
+						_, notAfter := certData.Signature().Validity()
+						if val, ok := notAfter.Get(); ok && val.After(time.Now()) {
 							return &sig.ContextSigner{
 								Signer:         key.Signer(),
 								KeyLocatorName: cert[:len(cert)-1], // remove version
