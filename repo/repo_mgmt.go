@@ -21,6 +21,11 @@ func (r *Repo) onMgmtCmd(_ enc.Name, wire enc.Wire, reply func(enc.Wire) error) 
 		return
 	}
 
+	if cmd.SyncLeave != nil {
+		go r.handleSyncLeave(cmd.SyncLeave, reply)
+		return
+	}
+
 	log.Warn(r, "Unknown management command received")
 }
 
@@ -32,6 +37,25 @@ func (r *Repo) handleSyncJoin(cmd *tlv.SyncJoin, reply func(enc.Wire) error) {
 		if err := r.startSvs(cmd); err != nil {
 			res.Status = 500
 			log.Error(r, "Failed to start SVS", "err", err)
+		}
+		reply(res.Encode())
+		return
+	}
+
+	log.Warn(r, "Unknown sync protocol specified in command", "protocol", cmd.Protocol)
+	res.Status = 400
+	reply(res.Encode())
+}
+
+// (AI GENERATED DESCRIPTION): Handles a SyncLeave command by stopping an SVS session for the specified group when the protocol is `SyncProtocolSvsV3`; otherwise, responds with an error status.
+func (r *Repo) handleSyncLeave(cmd *tlv.SyncLeave, reply func(enc.Wire) error) {
+	res := tlv.RepoCmdRes{Status: 200}
+
+	if cmd.Protocol != nil && cmd.Protocol.Name.Equal(tlv.SyncProtocolSvsV3) {
+		if err := r.stopSvs(cmd); err != nil {
+			res.Status = 500
+			res.Message = err.Error()
+			log.Error(r, "Failed to stop SVS", "err", err)
 		}
 		reply(res.Encode())
 		return
@@ -63,6 +87,32 @@ func (r *Repo) startSvs(cmd *tlv.SyncJoin) error {
 		return err
 	}
 	r.groupsSvs[hash] = svs
+
+	return nil
+}
+
+// stopSvs stops an SVS instance for the specified group.
+func (r *Repo) stopSvs(cmd *tlv.SyncLeave) error {
+	if cmd.Group == nil || len(cmd.Group.Name) == 0 {
+		return fmt.Errorf("missing group name")
+	}
+
+	hash := cmd.Group.Name.TlvStr()
+
+	r.mutex.Lock()
+	svs, ok := r.groupsSvs[hash]
+	r.mutex.Unlock()
+	if !ok {
+		return fmt.Errorf("group not joined")
+	}
+
+	if err := svs.Stop(); err != nil {
+		return err
+	}
+
+	r.mutex.Lock()
+	delete(r.groupsSvs, hash)
+	r.mutex.Unlock()
 
 	return nil
 }
