@@ -29,6 +29,9 @@ type TrustConfig struct {
 	// Everything in here is validated, fresh and passes the schema.
 	certCache *CertCache
 
+	// certListCache stores validated CertLists.
+	certListCache *CertListCache
+
 	// UseDataNameFwHint enables using the data name as the forwarding hint.
 	// This flag is useful depending on application naming structure.
 	//
@@ -53,6 +56,7 @@ func NewTrustConfig(keyChain ndn.KeyChain, schema ndn.TrustSchema, roots []enc.N
 
 	// The cache must start with all trust anchors
 	certCache := NewCertCache()
+	certListCache := NewCertListCache()
 
 	// Check if all roots are present in the keychain
 	for _, root := range roots {
@@ -68,11 +72,12 @@ func NewTrustConfig(keyChain ndn.KeyChain, schema ndn.TrustSchema, roots []enc.N
 	}
 
 	return &TrustConfig{
-		mutex:     sync.RWMutex{},
-		keychain:  keyChain,
-		schema:    schema,
-		roots:     roots,
-		certCache: certCache,
+		mutex:         sync.RWMutex{},
+		keychain:      keyChain,
+		schema:        schema,
+		roots:         roots,
+		certCache:     certCache,
+		certListCache: certListCache,
 	}, nil
 }
 
@@ -173,13 +178,6 @@ func (tc *TrustConfig) Validate(args TrustConfigValidateArgs) {
 	keyLocator := signature.KeyName()
 	if len(keyLocator) == 0 {
 		args.Callback(false, fmt.Errorf("key locator is nil"))
-		return
-	}
-
-	// Disallow self-signed certificates, all trust anchors must be in validated cache.
-	// This check is redundant since the trust schema should always disallow self-signed certs.
-	if keyLocator.IsPrefix(args.Data.Name()) {
-		args.Callback(false, fmt.Errorf("self-signed certificate: %s", keyLocator))
 		return
 	}
 
@@ -299,6 +297,12 @@ func (tc *TrustConfig) Validate(args TrustConfigValidateArgs) {
 		return
 	}
 
+	// Handle self-signed certificate (potential trust anchor).
+	if keyLocator.IsPrefix(args.Data.Name()) {
+		tc.handleSelfSignedCert(args, keyLocator)
+		return
+	}
+
 	// Reset all cert fields, this is just for extra safety
 	// The code below might seem to have a lot of redundancy - this is intentional.
 	args.cert = nil
@@ -414,5 +418,225 @@ func (tc *TrustConfig) validateCrossSchema(args TrustConfigValidateArgs) {
 		IgnoreValidity: args.IgnoreValidity,
 
 		depth: args.depth,
+	})
+}
+
+func (tc *TrustConfig) handleSelfSignedCert(args TrustConfigValidateArgs, keyLocator enc.Name) {
+	if len(args.DataSigCov) == 0 {
+		args.Callback(false, fmt.Errorf("cert sig covered is nil: %s", args.Data.Name()))
+		return
+	}
+
+	valid, err := signer.ValidateData(args.Data, args.DataSigCov, args.Data)
+	if !valid {
+		args.Callback(false, fmt.Errorf("signature is invalid"))
+		return
+	}
+	if err != nil {
+		args.Callback(false, fmt.Errorf("signature validate error: %w", err))
+		return
+	}
+
+	anchorKeyName, err := KeyNameFromLocator(keyLocator)
+	if err != nil {
+		args.Callback(false, fmt.Errorf("invalid anchor key locator: %w", err))
+		return
+	}
+
+	// If already an trust anchor
+	if tc.isTrustedAnchorKey(anchorKeyName) {
+		args.Callback(true, nil)
+		return
+	}
+
+	// Otherwise, continue validation through a CertList
+	tc.exploreCertList(certListArgs{
+		args:         args,
+		anchorCert:   args.Data,
+		anchorRaw:    args.certRaw,
+		anchorKey:    anchorKeyName,
+		visitedLists: map[string]struct{}{},
+		visitedCerts: map[string]struct{}{},
+	}, anchorKeyName.Append(enc.NewKeywordComponent("auth")))
+}
+
+// PromoteAnchor installs a validated trust anchor into caches and keychain.
+func (tc *TrustConfig) PromoteAnchor(cert ndn.Data, raw enc.Wire) {
+	if cert == nil {
+		return
+	}
+	tc.certCache.Put(cert)
+	name := cert.Name()
+
+	// Persist the trust anchor if not already present and raw is available.
+	if len(raw) > 0 {
+		tc.mutex.Lock()
+		_ = tc.keychain.InsertCert(raw.Join())
+		tc.mutex.Unlock()
+	}
+
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+	for _, root := range tc.roots {
+		if root.Equal(name) {
+			return
+		}
+	}
+	tc.roots = append(tc.roots, name)
+}
+
+func (tc *TrustConfig) isTrustedAnchorKey(keyLocator enc.Name) bool {
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
+	keyName, err := KeyNameFromLocator(keyLocator)
+	if err != nil {
+		return false
+	}
+	for _, root := range tc.roots {
+		if keyName.IsPrefix(root) {
+			return true
+		}
+	}
+	return false
+}
+
+type certListArgs struct {
+	args         TrustConfigValidateArgs
+	anchorCert   ndn.Data
+	anchorRaw    enc.Wire
+	anchorKey    enc.Name
+	visitedLists map[string]struct{}
+	visitedCerts map[string]struct{}
+}
+
+func (tc *TrustConfig) exploreCertList(args certListArgs, prefix enc.Name) {
+	key := prefix.TlvStr()
+	if _, ok := args.visitedLists[key]; ok {
+		args.args.Callback(false, fmt.Errorf("certlist loop"))
+		return
+	}
+	args.visitedLists[key] = struct{}{}
+
+	if cached, ok := tc.certListCache.Get(prefix); ok {
+		tc.processCertList(args, cached, nil)
+		return
+	}
+
+	var fwHint []enc.Name
+	if args.args.UseDataNameFwHint.GetOr(tc.UseDataNameFwHint) && len(args.args.origDataName) > 0 {
+		fwHint = []enc.Name{args.args.origDataName}
+	}
+
+	args.args.Fetch(prefix, &ndn.InterestConfig{
+		CanBePrefix:    true,
+		MustBeFresh:    true,
+		ForwardingHint: fwHint,
+	}, func(res ndn.ExpressCallbackArgs) {
+		if res.Error == nil && res.Result != ndn.InterestResultData {
+			res.Error = fmt.Errorf("failed to fetch CertList (%s) with result: %s", prefix, res.Result)
+		}
+
+		if res.Error != nil {
+			args.args.Callback(false, res.Error)
+			return
+		}
+
+		tc.processCertList(args, res.Data, res.SigCovered)
+	})
+}
+
+func (tc *TrustConfig) processCertList(args certListArgs, listData ndn.Data, listSigCov enc.Wire) {
+	if listData == nil {
+		args.args.Callback(false, fmt.Errorf("certlist missing"))
+		return
+	}
+	if !CertListNameMatches(args.anchorKey, listData.Name()) {
+		args.args.Callback(false, fmt.Errorf("certlist invalid"))
+		return
+	}
+	if listSigCov != nil {
+		valid, err := signer.ValidateData(listData, listSigCov, args.anchorCert)
+		if !valid || err != nil {
+			args.args.Callback(false, fmt.Errorf("certlist invalid"))
+			return
+		}
+		tc.certListCache.Put(args.anchorKey, listData)
+	}
+
+	names, err := DecodeCertList(listData.Content())
+	if err != nil {
+		args.args.Callback(false, fmt.Errorf("certlist invalid: %w", err))
+		return
+	}
+	tc.tryListedCerts(args, names, 0)
+}
+
+func (tc *TrustConfig) tryListedCerts(args certListArgs, names []enc.Name, idx int) {
+	if idx >= len(names) {
+		args.args.Callback(false, fmt.Errorf("no chain to trusted anchor"))
+		return
+	}
+
+	name := names[idx]
+	if _, ok := args.visitedCerts[name.TlvStr()]; ok {
+		tc.tryListedCerts(args, names, idx+1)
+		return
+	}
+	args.visitedCerts[name.TlvStr()] = struct{}{}
+
+	if _, ok := tc.certCache.Get(name); ok {
+		tc.PromoteAnchor(args.anchorCert, args.anchorRaw)
+		args.args.Callback(true, nil)
+		return
+	}
+
+	var fwHint []enc.Name
+	if args.args.UseDataNameFwHint.GetOr(tc.UseDataNameFwHint) && len(args.args.origDataName) > 0 {
+		fwHint = []enc.Name{args.args.origDataName}
+	}
+
+	args.args.Fetch(name, &ndn.InterestConfig{
+		CanBePrefix:    true,
+		MustBeFresh:    true,
+		ForwardingHint: fwHint,
+	}, func(res ndn.ExpressCallbackArgs) {
+		if res.Error == nil && res.Result != ndn.InterestResultData {
+			res.Error = fmt.Errorf("failed to fetch certificate (%s) with result: %s", name, res.Result)
+		}
+
+		if res.Error != nil {
+			tc.tryListedCerts(args, names, idx+1)
+			return
+		}
+
+		if t, ok := res.Data.ContentType().Get(); !ok || t != ndn.ContentTypeKey {
+			tc.tryListedCerts(args, names, idx+1)
+			return
+		}
+
+		tc.Validate(TrustConfigValidateArgs{
+			Data:       res.Data,
+			DataSigCov: res.SigCovered,
+
+			Fetch:             args.args.Fetch,
+			UseDataNameFwHint: args.args.UseDataNameFwHint,
+			Callback: func(valid bool, err error) {
+				if valid && err == nil {
+					tc.certCache.Put(res.Data)
+					if len(res.RawData) > 0 {
+						tc.mutex.Lock()
+						_ = tc.keychain.InsertCert(res.RawData.Join())
+						tc.mutex.Unlock()
+					}
+					tc.PromoteAnchor(args.anchorCert, args.anchorRaw)
+					args.args.Callback(true, nil)
+					return
+				}
+				tc.tryListedCerts(args, names, idx+1)
+			},
+			IgnoreValidity: args.args.IgnoreValidity,
+			origDataName:   args.args.origDataName,
+			depth:          args.args.depth,
+		})
 	})
 }

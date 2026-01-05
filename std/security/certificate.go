@@ -1,6 +1,8 @@
 package security
 
 import (
+	"fmt"
+	"io"
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
@@ -143,4 +145,55 @@ func getPubKey(data ndn.Data) ([]byte, enc.Name, error) {
 		// Invalid content type
 		return nil, nil, ndn.ErrInvalidValue{Item: "Data.ContentType", Value: contentType}
 	}
+}
+
+// EncodeCertList encodes a list of certificate names as a TLV sequence of Name TLVs.
+func EncodeCertList(names []enc.Name) (enc.Wire, error) {
+	if len(names) == 0 {
+		return nil, ndn.ErrInvalidValue{Item: "CertList", Value: "empty"}
+	}
+	length := 0
+	for _, n := range names {
+		length += len(n.Bytes())
+	}
+	buf := make([]byte, length)
+	pos := 0
+	for _, n := range names {
+		nb := n.Bytes()
+		copy(buf[pos:], nb)
+		pos += len(nb)
+	}
+	return enc.Wire{buf}, nil
+}
+
+// DecodeCertList decodes the content of a CertList into certificate names.
+func DecodeCertList(content enc.Wire) ([]enc.Name, error) {
+	reader := enc.NewWireView(content)
+	names := make([]enc.Name, 0)
+	for !reader.IsEOF() {
+		typ, err := reader.ReadTLNum()
+		if err != nil {
+			return nil, err
+		}
+		l, err := reader.ReadTLNum()
+		if err != nil {
+			return nil, err
+		}
+		if typ != enc.TypeName {
+			return nil, fmt.Errorf("unexpected TLV type %x in CertList", typ)
+		}
+		nameView := reader.Delegate(int(l))
+		if nameView.Length() != int(l) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		name, err := nameView.ReadName()
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return nil, ndn.ErrInvalidValue{Item: "CertList", Value: "empty"}
+	}
+	return names, nil
 }

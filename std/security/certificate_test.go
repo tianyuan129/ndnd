@@ -136,3 +136,21 @@ func TestSignCertOther(t *testing.T) {
 	require.Equal(t, 64, len(signature.SigValue())) // ed25519
 	require.True(t, tu.NoErr(signer.ValidateData(newCert, newSigCov, aliceCertData)))
 }
+
+func TestEncodeDecodeCertList(t *testing.T) {
+	tu.SetT(t)
+	n1 := tu.NoErr(enc.NameFromStr("/ndn/alice/KEY/aa/self/v=1"))
+	n2 := tu.NoErr(enc.NameFromStr("/ndn/alice/KEY/bb/ndn/v=2"))
+
+	wire, err := sec.EncodeCertList([]enc.Name{n1, n2})
+	require.NoError(t, err)
+	decoded, err := sec.DecodeCertList(wire)
+	require.NoError(t, err)
+	require.Equal(t, []enc.Name{n1, n2}, decoded)
+
+	_, err = sec.EncodeCertList(nil)
+	require.Error(t, err)
+
+	_, err = sec.DecodeCertList(enc.Wire{[]byte{0x01, 0x02}})
+	require.Error(t, err)
+}
