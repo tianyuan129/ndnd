@@ -762,7 +762,6 @@ func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
 	clear(tcTestNetwork)
 	tcTestT = t
 	network := tcTestNetwork
-	keychain := tcTestKeyChain
 
 	now := time.Now()
 	nb := now.Add(-time.Minute)
@@ -780,7 +779,6 @@ func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
 		NotAfter:  na,
 	}))
 	rootCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(rootCertWire))
-	require.NoError(t, keychain.InsertCert(rootCertWire.Join()))
 
 	// Owner <= testbed
 	ownerSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/root/owner"))))
@@ -938,11 +936,15 @@ func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
 
 	for _, st := range stages {
 		t.Run(st.name, func(t *testing.T) {
+			store := storage.NewMemoryStore()
+			tcTestKeyChain = keychain.NewKeyChainMem(store)
+			kc := tcTestKeyChain
+
 			for k, v := range st.add {
 				network[k] = v
 			}
-			require.NoError(t, keychain.InsertCert(rootCertWire.Join()))
-			trust, err := sec.NewTrustConfig(keychain, schema, []enc.Name{rootCertData.Name()})
+			require.NoError(t, kc.InsertCert(rootCertWire.Join()))
+			trust, err := sec.NewTrustConfig(kc, schema, []enc.Name{rootCertData.Name()})
 			require.NoError(t, err)
 
 			// Validate anchor cert first, then user data.

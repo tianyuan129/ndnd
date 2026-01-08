@@ -329,11 +329,14 @@ func (tc *TrustConfig) Validate(args TrustConfigValidateArgs) {
 	}
 
 	// Cert not found, attempt to fetch from network
-	args.Fetch(keyLocator, &ndn.InterestConfig{
+	fetchCfg := &ndn.InterestConfig{
 		CanBePrefix:    true,
 		MustBeFresh:    true,
 		ForwardingHint: fwHint,
-	}, func(res ndn.ExpressCallbackArgs) {
+	}
+	triedLocal := false
+	var cb ndn.ExpressCallbackFunc
+	cb = func(res ndn.ExpressCallbackArgs) {
 		if res.Error == nil && res.Result != ndn.InterestResultData {
 			res.Error = fmt.Errorf("failed to fetch certificate (%s) with result: %s", keyLocator, res.Result)
 		}
@@ -345,6 +348,14 @@ func (tc *TrustConfig) Validate(args TrustConfigValidateArgs) {
 
 		// Bail if not a certificate
 		if t, ok := res.Data.ContentType().Get(); !ok || t != ndn.ContentTypeKey {
+			if res.IsLocal && !triedLocal {
+				triedLocal = true
+				if res.Data != nil {
+					_ = tc.keychain.Store().Remove(res.Data.Name())
+				}
+				args.Fetch(keyLocator, fetchCfg, cb)
+				return
+			}
 			args.Callback(false, fmt.Errorf("non-certificate in chain: %s", res.Data.Name()))
 			return
 		}
@@ -366,7 +377,8 @@ func (tc *TrustConfig) Validate(args TrustConfigValidateArgs) {
 
 		// Continue validation with fetched cert
 		tc.Validate(args)
-	})
+	}
+	args.Fetch(keyLocator, fetchCfg, cb)
 }
 
 // (AI GENERATED DESCRIPTION): Validates the cross‑schema signed Data packet by parsing its embedded schema, checking its validity period, ensuring it authorizes the original certificate, and recursively validating the cross‑schema’s signature against the trust configuration.
@@ -518,7 +530,7 @@ func (tc *TrustConfig) exploreCertList(args certListArgs, prefix enc.Name) {
 	args.visitedLists[key] = struct{}{}
 
 	if cached, ok := tc.certListCache.Get(prefix); ok {
-		tc.processCertList(args, cached, nil)
+		tc.processCertList(args, cached, nil, nil)
 		return
 	}
 
@@ -541,11 +553,12 @@ func (tc *TrustConfig) exploreCertList(args certListArgs, prefix enc.Name) {
 			return
 		}
 
-		tc.processCertList(args, res.Data, res.SigCovered)
+		raw := utils.If(!res.IsLocal, res.RawData, nil)
+		tc.processCertList(args, res.Data, res.SigCovered, raw)
 	})
 }
 
-func (tc *TrustConfig) processCertList(args certListArgs, listData ndn.Data, listSigCov enc.Wire) {
+func (tc *TrustConfig) processCertList(args certListArgs, listData ndn.Data, listSigCov enc.Wire, raw enc.Wire) {
 	if listData == nil {
 		args.args.Callback(false, fmt.Errorf("certlist missing"))
 		return
@@ -561,6 +574,12 @@ func (tc *TrustConfig) processCertList(args certListArgs, listData ndn.Data, lis
 			return
 		}
 		tc.certListCache.Put(args.anchorKey, listData)
+	}
+
+	if len(raw) > 0 {
+		if err := tc.keychain.Store().Put(listData.Name(), raw.Join()); err != nil {
+			log.Warn(tc, "Failed to store CertList", "name", listData.Name(), "err", err)
+		}
 	}
 
 	names, err := DecodeCertList(listData.Content())
