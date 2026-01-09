@@ -455,7 +455,7 @@ func (tc *TrustConfig) handleSelfSignedCert(args TrustConfigValidateArgs, keyLoc
 		return
 	}
 
-	// If already an trust anchor
+	// If already a trust anchor
 	if tc.isTrustedAnchorKey(anchorKeyName) {
 		args.Callback(true, nil)
 		return
@@ -592,7 +592,7 @@ func (tc *TrustConfig) processCertList(args certListArgs, listData ndn.Data, lis
 
 func (tc *TrustConfig) tryListedCerts(args certListArgs, names []enc.Name, idx int) {
 	if idx >= len(names) {
-		args.args.Callback(false, fmt.Errorf("no chain to trusted anchor"))
+		args.args.Callback(false, fmt.Errorf("no chain to trusted anchor %s (tried %d certs from CertList)", args.anchorKey, len(names)))
 		return
 	}
 

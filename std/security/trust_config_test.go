@@ -449,22 +449,22 @@ func testTrustConfigIntra(t *testing.T, schema ndn.TrustSchema) {
 		name:   "/test/alice/data4",
 		signer: mAliceSigner,
 	}))
-	require.Equal(t, 6, tcTestFetchCount) // invalid cert not in store (+ CertList)
+	require.Equal(t, 6, tcTestFetchCount) // invalid cert not in store: 3 more fetches (includes CertList)
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:   "/test/alice/data3",
 		signer: malloryRootSigner,
 	}))
-	require.Equal(t, 7, tcTestFetchCount) // fetch 1x mallory cert (+ CertList)
+	require.Equal(t, 7, tcTestFetchCount) // fetch 1x mallory cert
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:   "/test/alice/data/extra",
 		signer: mallorySigner,
 	}))
-	require.Equal(t, 8, tcTestFetchCount) // don't bother fetching mallory root because of schema miss (+ CertList)
+	require.Equal(t, 8, tcTestFetchCount) // only CertList fetched; mallory root skipped by schema
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:   "/test/mallory/data4",
 		signer: mallorySigner,
 	}))
-	require.Equal(t, 11, tcTestFetchCount) // schema hit, fetch 2x mallory certs (+ CertList)
+	require.Equal(t, 11, tcTestFetchCount) // schema hit, 3 fetches: 2x mallory certs + 1x CertList
 
 	// Sign with mallory's malicious keys (root 2)
 	// In this case the root certificate name is the same, so that cert should not be fetched
