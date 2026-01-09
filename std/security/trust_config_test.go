@@ -3,7 +3,8 @@ package security_test
 import (
 	"crypto/elliptic"
 	_ "embed"
-	"strings"
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -33,8 +34,27 @@ import (
 
 #KEY: "KEY"/_/_/_
 */
-//go:embed trust_config_test_lvs.tlv
-var TRUST_CONFIG_TEST_LVS []byte
+//go:embed trust_config_test_lvs_intra.tlv
+var TRUST_CONFIG_INTRA_LVS []byte
+
+/*
+#testbed: "root"
+#wksp: "app"
+#KEY: "KEY"/_/_/_
+#CL: "KEY"/_/"32=auth"/_
+
+#root: #testbed/#KEY                     <= #root
+#owner: #testbed/"owner"/#KEY            <= #root
+#anchorpre: #wksp/#KEY                   <= #owner
+#anchor: #wksp/#KEY                      <= #anchor         // workspace trust anchor (self-signed)
+#anchorcl: #wksp/#CL                     <= #anchor
+
+#usercert: #wksp/"user"/user/#KEY        <= #anchor
+#userdata: #wksp/"user"/user/_           <= #usercert
+
+*/
+//go:embed trust_config_test_lvs_inter.tlv
+var TRUST_CONFIG_INTER_LVS []byte
 
 // Helper to create a name
 func sname(n string) enc.Name {
@@ -117,44 +137,95 @@ func validateCerts(certData ndn.Data, certDataSigCov enc.Wire, ignoreValidity bo
 }
 
 // Mock network fetch function
-func fetchFun(name enc.Name, _ *ndn.InterestConfig, callback ndn.ExpressCallbackFunc) {
-	var certWire enc.Wire = nil
-	var isLocal bool = false
-
-	// Fetch functions are required to check the store first
-	if buf, _ := tcTestKeyChain.Store().Get(name, true); buf != nil {
-		certWire = enc.Wire{buf}
-		isLocal = true
-	} else {
-		// Simulate fetch from network
-		tcTestFetchCount++
-		for netName, netWire := range tcTestNetwork {
-			if strings.HasPrefix(netName, name.String()) {
-				certWire = netWire
-				break
-			}
+func fetchFun(name enc.Name, cfg *ndn.InterestConfig, callback ndn.ExpressCallbackFunc) {
+	// Return from local keychain if possible
+	if tcTestKeyChain != nil {
+		if buf, _ := tcTestKeyChain.Store().Get(name, true); buf != nil {
+			data, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(enc.Wire{buf}))
+			callback(ndn.ExpressCallbackArgs{
+				Result:     ndn.InterestResultData,
+				Data:       data,
+				RawData:    enc.Wire{buf},
+				SigCovered: sigCov,
+				Error:      err,
+				IsLocal:    true,
+			})
+			return
 		}
 	}
 
-	if certWire != nil {
-		data, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(certWire))
+	tcTestFetchCount++
+
+	// Any 32=auth indicates a CertList (only for testing)
+	allowAuth := false
+	for _, c := range name {
+		if c.IsKeyword("auth") {
+			allowAuth = true
+			break
+		}
+	}
+
+	// Get data from dummy network
+	if direct, ok := tcTestNetwork[name.String()]; ok {
+		data, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(direct))
 		callback(ndn.ExpressCallbackArgs{
 			Result:     ndn.InterestResultData,
 			Data:       data,
-			RawData:    certWire,
+			RawData:    direct,
 			SigCovered: sigCov,
 			Error:      err,
-			IsLocal:    isLocal,
 		})
-	} else {
-		callback(ndn.ExpressCallbackArgs{
-			Result: ndn.InterestResultNack,
-		})
+		return
 	}
+
+	// Otherwise, iterate dummy network if CanBePrefix
+	if cfg != nil && cfg.CanBePrefix {
+		// Pick the longest prefix match among all
+		bestExtra := math.MaxInt
+		var best enc.Wire
+		for nstr, w := range tcTestNetwork {
+			nm := tu.NoErr(enc.NameFromStr(nstr))
+			if !name.IsPrefix(nm) {
+				continue
+			}
+			// Just in case we accidentally fetch CertList
+			if !allowAuth && len(nm) > len(name) && nm[len(name)].IsKeyword("auth") {
+				continue
+			}
+			extra := len(nm) - len(name)
+			// Get the best match
+			if best == nil || extra < bestExtra {
+				bestExtra = extra
+				best = w
+			}
+		}
+		if best != nil {
+			data, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(best))
+			callback(ndn.ExpressCallbackArgs{
+				Result:     ndn.InterestResultData,
+				Data:       data,
+				RawData:    best,
+				SigCovered: sigCov,
+				Error:      err,
+			})
+			return
+		}
+	}
+
+	// Otherwise, fall through
+	callback(ndn.ExpressCallbackArgs{
+		Result: ndn.InterestResultNack,
+		Error: func() error {
+			if allowAuth {
+				return fmt.Errorf("failed to fetch CertList (%s)", name)
+			}
+			return fmt.Errorf("not found")
+		}(),
+	})
 }
 
-// This is intended as the ultimate trust config test.
-func testTrustConfig(t *testing.T, schema ndn.TrustSchema) {
+// This is intended as the ultimate intra-domain trust config test.
+func testTrustConfigIntra(t *testing.T, schema ndn.TrustSchema) {
 	clear(tcTestNetwork)
 	tcTestT = t
 	network := tcTestNetwork
@@ -373,27 +444,27 @@ func testTrustConfig(t *testing.T, schema ndn.TrustSchema) {
 		name:   "/test/alice/data3",
 		signer: mAliceSigner,
 	}))
-	require.Equal(t, 2, tcTestFetchCount) // fetch 2x mallory certs
+	require.Equal(t, 3, tcTestFetchCount) // fetch 2x mallory certs + CertList
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:   "/test/alice/data4",
 		signer: mAliceSigner,
 	}))
-	require.Equal(t, 4, tcTestFetchCount) // invalid cert not in store
+	require.Equal(t, 6, tcTestFetchCount) // invalid cert not in store: 3 more fetches (includes CertList)
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:   "/test/alice/data3",
 		signer: malloryRootSigner,
 	}))
-	require.Equal(t, 5, tcTestFetchCount) // fetch 1x mallory cert
+	require.Equal(t, 7, tcTestFetchCount) // fetch 1x mallory cert
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:   "/test/alice/data/extra",
 		signer: mallorySigner,
 	}))
-	require.Equal(t, 6, tcTestFetchCount) // don't bother fetching mallory root because of schema miss
+	require.Equal(t, 8, tcTestFetchCount) // only CertList fetched; mallory root skipped by schema
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:   "/test/mallory/data4",
 		signer: mallorySigner,
 	}))
-	require.Equal(t, 8, tcTestFetchCount) // schema hit, fetch 2x mallory certs
+	require.Equal(t, 11, tcTestFetchCount) // schema hit, 3 fetches: 2x mallory certs + 1x CertList
 
 	// Sign with mallory's malicious keys (root 2)
 	// In this case the root certificate name is the same, so that cert should not be fetched
@@ -686,14 +757,243 @@ func testTrustConfig(t *testing.T, schema ndn.TrustSchema) {
 	}))
 }
 
+// This is intended as the ultimate inter-domain trust config test.
+func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
+	clear(tcTestNetwork)
+	tcTestT = t
+	network := tcTestNetwork
+
+	now := time.Now()
+	nb := now.Add(-time.Minute)
+	na := now.Add(time.Hour)
+	n := func(s string) enc.Name { return tu.NoErr(enc.NameFromStr(s)) }
+
+	// Testbed root
+	rootSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/root"))))
+	rootKeyData := tu.NoErr(signer.MarshalSecretToData(rootSigner))
+	rootCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    rootSigner,
+		Data:      rootKeyData,
+		IssuerId:  enc.NewGenericComponent("self"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	rootCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(rootCertWire))
+
+	// Owner <= testbed
+	ownerSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/root/owner"))))
+	ownerKeyData := tu.NoErr(signer.MarshalSecretToData(ownerSigner))
+	ownerCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    rootSigner,
+		Data:      ownerKeyData,
+		IssuerId:  enc.NewGenericComponent("root"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	ownerCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(ownerCertWire))
+
+	// Workspace anchor (cert)
+	anchorSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/app"))))
+	anchorKeyData := tu.NoErr(signer.MarshalSecretToData(anchorSigner))
+	anchorCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    anchorSigner,
+		Data:      anchorKeyData,
+		IssuerId:  enc.NewGenericComponent("self"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	anchorCertData, anchorSigCov, _ := spec.Spec{}.ReadData(enc.NewWireView(anchorCertWire))
+
+	// Workspace preanchor (precert)
+	preAnchorWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    ownerSigner,
+		Data:      anchorKeyData,
+		IssuerId:  enc.NewGenericComponent("owner"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	preAnchorData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(preAnchorWire))
+
+	wrongPreAnchorWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    anchorSigner,
+		Data:      anchorKeyData,
+		IssuerId:  enc.NewGenericComponent("self"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	wrongPreAnchorData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(wrongPreAnchorWire))
+
+	listContent := tu.NoErr(sec.EncodeCertList([]enc.Name{preAnchorData.Name()}))
+	listPrefix := tu.NoErr(sec.CertListPrefix(anchorSigner.KeyName()))
+	listName := listPrefix.Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
+	listWireEnc := tu.NoErr(spec.Spec{}.MakeData(listName, &ndn.DataConfig{
+		Freshness:    optional.Some(time.Minute),
+		SigNotBefore: optional.Some(nb),
+		SigNotAfter:  optional.Some(na),
+	}, listContent, anchorSigner))
+	listData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(listWireEnc.Wire))
+
+	invalidSignedList := tu.NoErr(spec.Spec{}.MakeData(listName, &ndn.DataConfig{
+		Freshness:    optional.Some(time.Minute),
+		SigNotBefore: optional.Some(nb),
+		SigNotAfter:  optional.Some(na),
+	}, listContent, rootSigner))
+
+	wrongListContent := tu.NoErr(sec.EncodeCertList([]enc.Name{wrongPreAnchorData.Name()}))
+	wrongListWire := tu.NoErr(spec.Spec{}.MakeData(listName, &ndn.DataConfig{
+		Freshness:    optional.Some(time.Minute),
+		SigNotBefore: optional.Some(nb),
+		SigNotAfter:  optional.Some(na),
+	}, wrongListContent, anchorSigner))
+
+	userSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/app/user/alice"))))
+	userKeyData := tu.NoErr(signer.MarshalSecretToData(userSigner))
+	userCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    anchorSigner,
+		Data:      userKeyData,
+		IssuerId:  enc.NewGenericComponent("app"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	userCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(userCertWire))
+
+	payload := enc.Wire{[]byte{0x01}}
+	dataWire := tu.NoErr(spec.Spec{}.MakeData(n("/app/user/alice/data"), &ndn.DataConfig{
+		Freshness: optional.Some(time.Minute),
+	}, payload, userSigner))
+	dataPkt, dataSigCov, _ := spec.Spec{}.ReadData(enc.NewWireView(dataWire.Wire))
+
+	require.True(t, schema.Check(anchorCertData.Name(), anchorCertData.Name()))
+	require.True(t, schema.Check(preAnchorData.Name(), ownerCertData.Name()))
+	require.True(t, schema.Check(listData.Name(), anchorCertData.Name()))
+	require.True(t, schema.Check(userCertData.Name(), anchorCertData.Name()))
+	require.True(t, schema.Check(dataPkt.Name(), userCertData.Name()))
+
+	network[anchorCertData.Name().String()] = anchorCertWire
+	network[userCertData.Name().String()] = userCertWire
+	network[ownerCertData.Name().String()] = ownerCertWire
+
+	type stage struct {
+		name          string
+		add           map[string]enc.Wire
+		expectAnchor  bool
+		expectData    bool
+		expectErrPart string
+	}
+
+	stages := []stage{
+		{
+			name:          "no certlist",
+			add:           map[string]enc.Wire{},
+			expectErrPart: "CertList",
+		},
+		{
+			name: "certlist wrong signer",
+			add: map[string]enc.Wire{
+				listName.String(): invalidSignedList.Wire,
+			},
+			expectErrPart: "certlist invalid",
+		},
+		{
+			name: "certlist wrong target",
+			add: map[string]enc.Wire{
+				listName.String():                  wrongListWire.Wire,
+				wrongPreAnchorData.Name().String(): wrongPreAnchorWire,
+			},
+			expectErrPart: "no chain",
+		},
+		{
+			name: "certlist ok",
+			add: map[string]enc.Wire{
+				listData.Name().String():      listWireEnc.Wire,
+				preAnchorData.Name().String(): preAnchorWire,
+			},
+			expectAnchor: true,
+			expectData:   true,
+		},
+	}
+
+	validateOnce := func(trust *sec.TrustConfig, data ndn.Data, sigCov enc.Wire) (bool, error) {
+		tcTestFetchCount = 0
+		done := make(chan struct {
+			v   bool
+			err error
+		}, 1)
+		trust.Validate(sec.TrustConfigValidateArgs{
+			Data:       data,
+			DataSigCov: sigCov,
+			Fetch:      fetchFun,
+			Callback: func(valid bool, err error) {
+				done <- struct {
+					v   bool
+					err error
+				}{v: valid, err: err}
+			},
+		})
+		res := <-done
+		return res.v, res.err
+	}
+
+	for _, st := range stages {
+		t.Run(st.name, func(t *testing.T) {
+			store := storage.NewMemoryStore()
+			tcTestKeyChain = keychain.NewKeyChainMem(store)
+			kc := tcTestKeyChain
+
+			for k, v := range st.add {
+				network[k] = v
+			}
+			require.NoError(t, kc.InsertCert(rootCertWire.Join()))
+			trust, err := sec.NewTrustConfig(kc, schema, []enc.Name{rootCertData.Name()})
+			require.NoError(t, err)
+
+			// Validate anchor cert first, then user data.
+			anchorValid, anchorErr := validateOnce(trust, anchorCertData, anchorSigCov)
+			dataValid, dataErr := validateOnce(trust, dataPkt, dataSigCov)
+			if st.expectData {
+				require.True(t, dataValid)
+				require.NoError(t, dataErr)
+			} else {
+				require.False(t, dataValid)
+				require.Error(t, dataErr)
+				if st.expectErrPart != "" {
+					require.Contains(t, dataErr.Error(), st.expectErrPart)
+				}
+			}
+
+			if st.expectAnchor {
+				require.True(t, anchorValid)
+				require.NoError(t, anchorErr)
+			} else {
+				require.False(t, anchorValid)
+				require.Error(t, anchorErr)
+				if st.expectErrPart != "" {
+					require.Contains(t, anchorErr.Error(), st.expectErrPart)
+				}
+			}
+		})
+	}
+}
+
 // (AI GENERATED DESCRIPTION): Initializes an in‑memory store and key chain, loads an LVS trust schema, and runs trust configuration tests.
-func TestTrustConfigLvs(t *testing.T) {
+func TestTrustConfigLvsIntra(t *testing.T) {
 	tu.SetT(t)
 
 	store := storage.NewMemoryStore()
 	tcTestKeyChain = keychain.NewKeyChainMem(store)
-	schema, err := trust_schema.NewLvsSchema(TRUST_CONFIG_TEST_LVS)
+	schemaIntra, err := trust_schema.NewLvsSchema(TRUST_CONFIG_INTRA_LVS)
 	require.NoError(t, err)
 
-	testTrustConfig(t, schema)
+	testTrustConfigIntra(t, schemaIntra)
+}
+
+func TestTrustConfigLvsInter(t *testing.T) {
+	tu.SetT(t)
+
+	store := storage.NewMemoryStore()
+	tcTestKeyChain = keychain.NewKeyChainMem(store)
+	schemaInter, err := trust_schema.NewLvsSchema(TRUST_CONFIG_INTER_LVS)
+	require.NoError(t, err)
+
+	testTrustConfigInter(t, schemaInter)
 }

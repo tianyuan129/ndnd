@@ -82,3 +82,55 @@ func TestGetKeyNameFromCertName(t *testing.T) {
 	_, err = sec.GetKeyNameFromCertName(enc.Name{})
 	require.Error(t, err)
 }
+
+func TestCertListNaming(t *testing.T) {
+	tu.SetT(t)
+
+	keyName := tu.NoErr(enc.NameFromStr("/my/test/identity/KEY/kid"))
+	prefix, err := sec.CertListPrefix(keyName)
+	require.NoError(t, err)
+	require.True(t, prefix.At(-1).IsKeyword("auth"))
+
+	// Exact prefix and version
+	require.True(t, sec.CertListNameMatches(keyName, prefix))
+	withVer := prefix.Append(enc.NewVersionComponent(1))
+	require.True(t, sec.CertListNameMatches(keyName, withVer))
+	// implicit digest stripped
+	withDigest := withVer.Append(enc.Component{Typ: enc.TypeImplicitSha256DigestComponent})
+	require.True(t, sec.CertListNameMatches(keyName, withDigest))
+
+	// Wrong auth type (generic, not keyword)
+	wrongAuth := keyName.Append(enc.NewGenericComponent("auth"))
+	require.False(t, sec.CertListNameMatches(keyName, wrongAuth))
+	// Extra components or wrong key
+	require.False(t, sec.CertListNameMatches(keyName, withVer.Append(enc.NewSegmentComponent(0))))
+	require.False(t, sec.CertListNameMatches(tu.NoErr(enc.NameFromStr("/other/KEY/kid")), withVer))
+
+	// Version parsing
+	require.Equal(t, uint64(1), sec.CertListVersion(withVer))
+	require.Equal(t, uint64(1), sec.CertListVersion(withDigest))
+	require.Equal(t, uint64(0), sec.CertListVersion(prefix))
+}
+
+func TestAnchorKeyNameFromLocator(t *testing.T) {
+	tu.SetT(t)
+
+	keyName := tu.NoErr(enc.NameFromStr("/my/test/identity/KEY/kid"))
+	certName := keyName.Append(enc.NewGenericComponent("issuer"), enc.NewVersionComponent(5))
+	issuerOnly := keyName.Append(enc.NewGenericComponent("issuer"))
+
+	got, err := sec.KeyNameFromLocator(keyName)
+	require.NoError(t, err)
+	require.Equal(t, keyName, got)
+
+	got, err = sec.KeyNameFromLocator(certName)
+	require.NoError(t, err)
+	require.Equal(t, keyName, got)
+
+	got, err = sec.KeyNameFromLocator(issuerOnly)
+	require.NoError(t, err)
+	require.Equal(t, keyName, got)
+
+	_, err = sec.KeyNameFromLocator(tu.NoErr(enc.NameFromStr("/wrong/components")))
+	require.Error(t, err)
+}

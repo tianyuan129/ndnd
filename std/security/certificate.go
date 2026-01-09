@@ -1,6 +1,8 @@
 package security
 
 import (
+	"fmt"
+	"io"
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
@@ -14,6 +16,9 @@ import (
 type SignCertArgs struct {
 	// Signer is the private key used to sign the certificate.
 	Signer ndn.Signer
+	// SignerName sets the KeyLocator of the signature to a specific
+	// name. Optional; defaults to the signer’s key name.
+	SignerName enc.Name
 	// Data is the CSR or Key to be signed.
 	Data ndn.Data
 	// IssuerId is the issuer ID to be included in the certificate name.
@@ -65,7 +70,22 @@ func SignCert(args SignCertArgs) (enc.Wire, error) {
 		SigNotAfter:  optional.Some(args.NotAfter),
 		CrossSchema:  args.CrossSchema,
 	}
-	cert, err := spec.Spec{}.MakeData(certName, cfg, enc.Wire{pk}, args.Signer)
+	signer := args.Signer
+	if len(args.SignerName) > 0 {
+		locatorKey, err := KeyNameFromLocator(args.SignerName)
+		if err != nil {
+			return nil, err
+		}
+		if !locatorKey.Equal(args.Signer.KeyName()) {
+			return nil, ndn.ErrInvalidValue{Item: "SignerName", Value: args.SignerName}
+		}
+		signer = &sig.ContextSigner{
+			Signer:         args.Signer,
+			KeyLocatorName: args.SignerName,
+		}
+	}
+
+	cert, err := spec.Spec{}.MakeData(certName, cfg, enc.Wire{pk}, signer)
 	if err != nil {
 		return nil, err
 	}
@@ -143,4 +163,55 @@ func getPubKey(data ndn.Data) ([]byte, enc.Name, error) {
 		// Invalid content type
 		return nil, nil, ndn.ErrInvalidValue{Item: "Data.ContentType", Value: contentType}
 	}
+}
+
+// EncodeCertList encodes a list of certificate names as a TLV sequence of Name TLVs.
+func EncodeCertList(names []enc.Name) (enc.Wire, error) {
+	if len(names) == 0 {
+		return nil, ndn.ErrInvalidValue{Item: "CertList", Value: "empty"}
+	}
+	length := 0
+	for _, n := range names {
+		length += len(n.Bytes())
+	}
+	buf := make([]byte, length)
+	pos := 0
+	for _, n := range names {
+		nb := n.Bytes()
+		copy(buf[pos:], nb)
+		pos += len(nb)
+	}
+	return enc.Wire{buf}, nil
+}
+
+// DecodeCertList decodes the content of a CertList into certificate names.
+func DecodeCertList(content enc.Wire) ([]enc.Name, error) {
+	reader := enc.NewWireView(content)
+	names := make([]enc.Name, 0)
+	for !reader.IsEOF() {
+		typ, err := reader.ReadTLNum()
+		if err != nil {
+			return nil, err
+		}
+		l, err := reader.ReadTLNum()
+		if err != nil {
+			return nil, err
+		}
+		if typ != enc.TypeName {
+			return nil, fmt.Errorf("unexpected TLV type %x in CertList", typ)
+		}
+		nameView := reader.Delegate(int(l))
+		if nameView.Length() != int(l) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		name, err := nameView.ReadName()
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return nil, ndn.ErrInvalidValue{Item: "CertList", Value: "empty"}
+	}
+	return names, nil
 }
