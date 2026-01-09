@@ -105,11 +105,15 @@ func stripImplicitDigest(name enc.Name) enc.Name {
 // that may be a key name, certificate name, or cert name without version.
 func KeyNameFromLocator(name enc.Name) (enc.Name, error) {
 	name = stripImplicitDigest(name)
-	for i := 0; i+1 < len(name); i++ {
-		comp := name[i]
-		if comp.String() == "KEY" || comp.IsKeyword("KEY") {
-			return name[:i+2], nil
+	if len(name) < 3 {
+		return nil, ndn.ErrInvalidValue{Item: "KEY component"}
+	} else {
+		for i := len(name) - 2; i >= 0; i-- {
+			comp := name.At(i)
+			if comp.String() == "KEY" || comp.IsKeyword("KEY") {
+				return name[:i+2], nil
+			}
 		}
+		return nil, ndn.ErrInvalidValue{Item: "KEY component"}
 	}
-	return nil, ndn.ErrInvalidValue{Item: "KEY component"}
 }
