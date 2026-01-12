@@ -576,16 +576,15 @@ func (tc *TrustConfig) processCertList(args certListArgs, listData ndn.Data, lis
 		tc.certListCache.Put(args.anchorKey, listData)
 	}
 
-	if len(raw) > 0 {
-		if err := tc.keychain.Store().Put(listData.Name(), raw.Join()); err != nil {
-			log.Warn(tc, "Failed to store CertList", "name", listData.Name(), "err", err)
-		}
-	}
-
 	names, err := DecodeCertList(listData.Content())
 	if err != nil {
 		args.args.Callback(false, fmt.Errorf("certlist invalid: %w", err))
 		return
+	}
+	if len(raw) > 0 {
+		if err := tc.keychain.Store().Put(listData.Name(), raw.Join()); err != nil {
+			log.Warn(tc, "Failed to store CertList", "name", listData.Name(), "err", err)
+		}
 	}
 	tc.tryListedCerts(args, names, 0)
 }
@@ -597,6 +596,10 @@ func (tc *TrustConfig) tryListedCerts(args certListArgs, names []enc.Name, idx i
 	}
 
 	name := names[idx]
+	if !args.anchorKey.IsPrefix(name) {
+		log.Debug(tc, "redirected cert name mismatch", "anchor", args.anchorKey, "redirect", name)
+		return
+	}
 	if _, ok := args.visitedCerts[name.TlvStr()]; ok {
 		tc.tryListedCerts(args, names, idx+1)
 		return
