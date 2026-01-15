@@ -36,6 +36,10 @@ func (r *RepoSvs) String() string {
 	return fmt.Sprintf("repo-svs (%s)", r.cmd.Group.Name)
 }
 
+func (r *RepoSvs) Client() ndn.Client {
+	return r.client
+}
+
 // (AI GENERATED DESCRIPTION): Initializes and starts the repository SVS ALO, configuring snapshots, multicast, prefix announcements, and publisher subscriptions.
 func (r *RepoSvs) Start() (err error) {
 	log.Info(r, "Starting SVS")

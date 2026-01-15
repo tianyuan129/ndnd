@@ -53,6 +53,10 @@ type Client interface {
 	Validate(data Data, sigCov enc.Wire, callback func(bool, error))
 	// ValidateExt validates a single data packet (advanced API).
 	ValidateExt(args ValidateExtArgs)
+	// SetTrustSchema updates trust schema
+	SetTrustSchema(schema TrustSchema)
+	// PromoteTrustAnchor promotes a self-signed cert to a trust anchor
+	PromoteTrustAnchor(cert Data, raw enc.Wire)
 
 	// AnnouncePrefix announces a prefix to the network.
 	AnnouncePrefix(args Announcement)

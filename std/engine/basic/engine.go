@@ -669,7 +669,7 @@ func (e *Engine) ExecMgmtCmd(module string, cmd string, args any) (any, error) {
 
 // (AI GENERATED DESCRIPTION): Sets the Engine’s command security by assigning a signer for management packets and a validator function for checking incoming command signatures.
 func (e *Engine) SetCmdSec(signer ndn.Signer, validator func(enc.Name, enc.Wire, ndn.Signature) bool) {
-	e.mgmtConf.SetSigner(signer)
+	e.mgmtConf.SetSigner(sig.AsContextSigner(signer))
 	e.cmdChecker = validator
 }
 

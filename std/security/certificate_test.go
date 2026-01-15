@@ -160,31 +160,18 @@ func TestSignCertWithSignerCertName(t *testing.T) {
 
 	// sign root cert with alice's key but force the KeyLocator to use alice's cert name
 	newCertB := tu.NoErr(sec.SignCert(sec.SignCertArgs{
-		Signer:     aliceSigner,
-		SignerName: aliceCertData.Name(),
-		Data:       rootCertData,
-		IssuerId:   ISSUER,
-		NotBefore:  T1,
-		NotAfter:   T2,
+		Signer:    aliceSigner,
+		Data:      rootCertData,
+		IssuerId:  ISSUER,
+		NotBefore: T1,
+		NotAfter:  T2,
 	}))
 	newCert, newSigCov, err := spec_2022.Spec{}.ReadData(enc.NewWireView(newCertB))
 	require.NoError(t, err)
 
 	signature := newCert.Signature()
-	require.Equal(t, aliceCertData.Name(), signature.KeyName())
+	require.Equal(t, aliceSigner.KeyName(), signature.KeyName())
 	require.True(t, tu.NoErr(signer.ValidateData(newCert, newSigCov, aliceCertData)))
-
-	t.Run("mismatched signer cert name", func(t *testing.T) {
-		_, err := sec.SignCert(sec.SignCertArgs{
-			Signer:     aliceSigner,
-			SignerName: rootCertData.Name(), // wrong key name
-			Data:       rootCertData,
-			IssuerId:   ISSUER,
-			NotBefore:  T1,
-			NotAfter:   T2,
-		})
-		require.Error(t, err)
-	})
 }
 
 func TestEncodeDecodeCertList(t *testing.T) {

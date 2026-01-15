@@ -246,10 +246,7 @@ func (s *LvsSchema) Suggest(pkt enc.Name, keychain ndn.KeyChain) ndn.Signer {
 
 						_, notAfter := certData.Signature().Validity()
 						if val, ok := notAfter.Get(); ok && val.After(time.Now()) {
-							return &sig.ContextSigner{
-								Signer:         key.Signer(),
-								KeyLocatorName: cert[:len(cert)-1], // remove version
-							}
+							return sig.WithKeyLocator(key.Signer(), cert[:len(cert)-1]) // remove version
 						}
 					}
 				}

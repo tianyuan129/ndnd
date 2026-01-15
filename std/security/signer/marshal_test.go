@@ -78,3 +78,22 @@ func TestUnmarshalSecret(t *testing.T) {
 	require.Equal(t, ndn.SignatureSha256WithRsa, signer.Type())
 	require.Equal(t, RSA_KEY_NAME, signer.KeyName())
 }
+
+// Ensure marshal works when the signer is wrapped in a ContextSigner (e.g., to override the key locator).
+func TestMarshalSecretContextSigner(t *testing.T) {
+	tu.SetT(t)
+
+	secret, _ := base64.StdEncoding.DecodeString(RSA_KEY_SECRET)
+	baseSigner := tu.NoErr(sig.ParseRsa(RSA_KEY_NAME, secret))
+	keyLocator := RSA_KEY_NAME.Append(enc.NewGenericComponent("loc"))
+	ctxSigner := sig.WithKeyLocator(baseSigner, keyLocator)
+
+	wire := tu.NoErr(sig.MarshalSecret(ctxSigner))
+
+	data, _, err := spec.Spec{}.ReadData(enc.NewWireView(wire))
+	require.NoError(t, err)
+	require.Equal(t, ndn.ContentTypeSigningKey, data.ContentType().Unwrap())
+	require.Equal(t, RSA_KEY_NAME, data.Name())
+	require.Equal(t, secret, data.Content().Join())
+	require.Equal(t, keyLocator, data.Signature().KeyName())
+}

@@ -16,9 +16,6 @@ import (
 type SignCertArgs struct {
 	// Signer is the private key used to sign the certificate.
 	Signer ndn.Signer
-	// SignerName sets the KeyLocator of the signature to a specific
-	// name. Optional; defaults to the signer’s key name.
-	SignerName enc.Name
 	// Data is the CSR or Key to be signed.
 	Data ndn.Data
 	// IssuerId is the issuer ID to be included in the certificate name.
@@ -70,20 +67,7 @@ func SignCert(args SignCertArgs) (enc.Wire, error) {
 		SigNotAfter:  optional.Some(args.NotAfter),
 		CrossSchema:  args.CrossSchema,
 	}
-	signer := args.Signer
-	if len(args.SignerName) > 0 {
-		locatorKey, err := KeyNameFromLocator(args.SignerName)
-		if err != nil {
-			return nil, err
-		}
-		if !locatorKey.Equal(args.Signer.KeyName()) {
-			return nil, ndn.ErrInvalidValue{Item: "SignerName", Value: args.SignerName}
-		}
-		signer = &sig.ContextSigner{
-			Signer:         args.Signer,
-			KeyLocatorName: args.SignerName,
-		}
-	}
+	signer := sig.AsContextSigner(args.Signer)
 
 	cert, err := spec.Spec{}.MakeData(certName, cfg, enc.Wire{pk}, signer)
 	if err != nil {

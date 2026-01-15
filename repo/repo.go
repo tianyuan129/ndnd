@@ -22,6 +22,9 @@ type Repo struct {
 	store  ndn.Store
 	client ndn.Client
 
+	keychain ndn.KeyChain
+	trust    *sec.TrustConfig
+
 	groupsSvs map[string]*RepoSvs
 	mutex     sync.Mutex
 }
@@ -56,15 +59,13 @@ func (r *Repo) Start() (err error) {
 		return err
 	}
 
-	// TODO: Trust config may be specific to application
-	// This may need us to make a client for each app
 	kc, err := keychain.NewKeyChain(r.config.KeyChainUri, r.store)
 	if err != nil {
 		return err
 	}
+	r.keychain = kc
 
-	// TODO: specify a real trust schema
-	// TODO: handle app-specific case
+	// TODO: enforce trust schema defined by repo provider
 	schema := trust_schema.NewNullSchema()
 
 	// TODO: handle app-specific case
@@ -75,6 +76,7 @@ func (r *Repo) Start() (err error) {
 	if err != nil {
 		return err
 	}
+	r.trust = trust
 
 	// Attach data name as forwarding hint to cert Interests
 	// TODO: what to do if this is app dependent? Separate client for each app?

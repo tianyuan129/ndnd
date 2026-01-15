@@ -94,6 +94,16 @@ func (tc *TrustConfig) Suggest(name enc.Name) ndn.Signer {
 	return tc.schema.Suggest(name, tc.keychain)
 }
 
+// SetSchema atomically replaces the trust schema.
+func (tc *TrustConfig) SetSchema(schema ndn.TrustSchema) {
+	if schema == nil {
+		return
+	}
+	tc.mutex.Lock()
+	tc.schema = schema
+	tc.mutex.Unlock()
+}
+
 // TrustConfigValidateArgs are the arguments for the TrustConfig Validate function.
 type TrustConfigValidateArgs struct {
 	// Data is the packet to validate.

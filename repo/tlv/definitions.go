@@ -37,6 +37,8 @@ type SyncJoin struct {
 	MulticastPrefix *spec.NameContainer `tlv:"0x194"`
 	//+field:struct:HistorySnapshotConfig
 	HistorySnapshot *HistorySnapshotConfig `tlv:"0x1A4"`
+	//+field:struct:spec.NameContainer
+	SecurityConfig *spec.NameContainer `tlv:"0x1DB4"`
 }
 
 type SyncLeave struct {
@@ -56,4 +58,11 @@ type BlobFetch struct {
 	Name *spec.NameContainer `tlv:"0x1B8"`
 	//+field:sequence:[]byte:binary:[]byte
 	Data [][]byte `tlv:"0x1BA"`
+}
+
+type SecurityConfigObject struct {
+	//+field:sequence:[]byte:binary:[]byte
+	Schema []byte `tlv:"0x1A5"`
+	//+field:sequence:[]byte:binary:[]byte
+	Anchors [][]byte `tlv:"0x1BA"`
 }

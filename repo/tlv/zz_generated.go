@@ -374,6 +374,7 @@ type SyncJoinEncoder struct {
 	Group_encoder           spec.NameContainerEncoder
 	MulticastPrefix_encoder spec.NameContainerEncoder
 	HistorySnapshot_encoder HistorySnapshotConfigEncoder
+	SecurityConfig_encoder  spec.NameContainerEncoder
 }
 
 type SyncJoinParsingContext struct {
@@ -381,6 +382,7 @@ type SyncJoinParsingContext struct {
 	Group_context           spec.NameContainerParsingContext
 	MulticastPrefix_context spec.NameContainerParsingContext
 	HistorySnapshot_context HistorySnapshotConfigParsingContext
+	SecurityConfig_context  spec.NameContainerParsingContext
 }
 
 func (encoder *SyncJoinEncoder) Init(value *SyncJoin) {
@@ -395,6 +397,9 @@ func (encoder *SyncJoinEncoder) Init(value *SyncJoin) {
 	}
 	if value.HistorySnapshot != nil {
 		encoder.HistorySnapshot_encoder.Init(value.HistorySnapshot)
+	}
+	if value.SecurityConfig != nil {
+		encoder.SecurityConfig_encoder.Init(value.SecurityConfig)
 	}
 
 	l := uint(0)
@@ -418,6 +423,11 @@ func (encoder *SyncJoinEncoder) Init(value *SyncJoin) {
 		l += uint(enc.TLNum(encoder.HistorySnapshot_encoder.Length).EncodingLength())
 		l += encoder.HistorySnapshot_encoder.Length
 	}
+	if value.SecurityConfig != nil {
+		l += 3
+		l += uint(enc.TLNum(encoder.SecurityConfig_encoder.Length).EncodingLength())
+		l += encoder.SecurityConfig_encoder.Length
+	}
 	encoder.Length = l
 
 }
@@ -427,6 +437,7 @@ func (context *SyncJoinParsingContext) Init() {
 	context.Group_context.Init()
 	context.MulticastPrefix_context.Init()
 	context.HistorySnapshot_context.Init()
+	context.SecurityConfig_context.Init()
 }
 
 func (encoder *SyncJoinEncoder) EncodeInto(value *SyncJoin, buf []byte) {
@@ -473,6 +484,16 @@ func (encoder *SyncJoinEncoder) EncodeInto(value *SyncJoin, buf []byte) {
 			pos += encoder.HistorySnapshot_encoder.Length
 		}
 	}
+	if value.SecurityConfig != nil {
+		buf[pos] = 253
+		binary.BigEndian.PutUint16(buf[pos+1:], uint16(7604))
+		pos += 3
+		pos += uint(enc.TLNum(encoder.SecurityConfig_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.SecurityConfig_encoder.Length > 0 {
+			encoder.SecurityConfig_encoder.EncodeInto(value.SecurityConfig, buf[pos:])
+			pos += encoder.SecurityConfig_encoder.Length
+		}
+	}
 }
 
 func (encoder *SyncJoinEncoder) Encode(value *SyncJoin) enc.Wire {
@@ -491,6 +512,7 @@ func (context *SyncJoinParsingContext) Parse(reader enc.WireView, ignoreCritical
 	var handled_Group bool = false
 	var handled_MulticastPrefix bool = false
 	var handled_HistorySnapshot bool = false
+	var handled_SecurityConfig bool = false
 
 	progress := -1
 	_ = progress
@@ -541,6 +563,12 @@ func (context *SyncJoinParsingContext) Parse(reader enc.WireView, ignoreCritical
 					handled_HistorySnapshot = true
 					value.HistorySnapshot, err = context.HistorySnapshot_context.Parse(reader.Delegate(int(l)), ignoreCritical)
 				}
+			case 7604:
+				if true {
+					handled = true
+					handled_SecurityConfig = true
+					value.SecurityConfig, err = context.SecurityConfig_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+				}
 			default:
 				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
 					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
@@ -570,6 +598,9 @@ func (context *SyncJoinParsingContext) Parse(reader enc.WireView, ignoreCritical
 	}
 	if !handled_HistorySnapshot && err == nil {
 		value.HistorySnapshot = nil
+	}
+	if !handled_SecurityConfig && err == nil {
+		value.SecurityConfig = nil
 	}
 
 	if err != nil {
@@ -1120,6 +1151,261 @@ func (value *BlobFetch) Bytes() []byte {
 
 func ParseBlobFetch(reader enc.WireView, ignoreCritical bool) (*BlobFetch, error) {
 	context := BlobFetchParsingContext{}
+	context.Init()
+	return context.Parse(reader, ignoreCritical)
+}
+
+type SecurityConfigObjectEncoder struct {
+	Length uint
+
+	Schema_encoder struct {
+	}
+	Anchors_subencoder []struct {
+	}
+}
+
+type SecurityConfigObjectParsingContext struct {
+}
+
+func (encoder *SecurityConfigObjectEncoder) Init(value *SecurityConfigObject) {
+	{
+		encoder := &encoder.Schema_encoder
+		value := struct {
+		}{}
+
+		_ = encoder
+		_ = value
+	}
+	{
+		Anchors_l := len(value.Anchors)
+		encoder.Anchors_subencoder = make([]struct {
+		}, Anchors_l)
+		for i := 0; i < Anchors_l; i++ {
+			pseudoEncoder := &encoder.Anchors_subencoder[i]
+			pseudoValue := struct {
+				Anchors []byte
+			}{
+				Anchors: value.Anchors[i],
+			}
+			{
+				encoder := pseudoEncoder
+				value := &pseudoValue
+
+				_ = encoder
+				_ = value
+			}
+		}
+	}
+
+	l := uint(0)
+	{
+		encoder := &encoder.Schema_encoder
+		value := struct {
+			Schema []byte
+		}{
+			Schema: value.Schema,
+		}
+		{
+			if value.Schema != nil {
+				l += 3
+				l += uint(enc.TLNum(len(value.Schema)).EncodingLength())
+				l += uint(len(value.Schema))
+			}
+			_ = encoder
+			_ = value
+		}
+	}
+	if value.Anchors != nil {
+		for seq_i, seq_v := range value.Anchors {
+			pseudoEncoder := &encoder.Anchors_subencoder[seq_i]
+			pseudoValue := struct {
+				Anchors []byte
+			}{
+				Anchors: seq_v,
+			}
+			{
+				encoder := pseudoEncoder
+				value := &pseudoValue
+				if value.Anchors != nil {
+					l += 3
+					l += uint(enc.TLNum(len(value.Anchors)).EncodingLength())
+					l += uint(len(value.Anchors))
+				}
+				_ = encoder
+				_ = value
+			}
+		}
+	}
+	encoder.Length = l
+
+}
+
+func (context *SecurityConfigObjectParsingContext) Init() {
+
+}
+
+func (encoder *SecurityConfigObjectEncoder) EncodeInto(value *SecurityConfigObject, buf []byte) {
+
+	pos := uint(0)
+
+	{
+		encoder := &encoder.Schema_encoder
+		value := struct {
+			Schema []byte
+		}{
+			Schema: value.Schema,
+		}
+		{
+			if value.Schema != nil {
+				buf[pos] = 253
+				binary.BigEndian.PutUint16(buf[pos+1:], uint16(421))
+				pos += 3
+				pos += uint(enc.TLNum(len(value.Schema)).EncodeInto(buf[pos:]))
+				copy(buf[pos:], value.Schema)
+				pos += uint(len(value.Schema))
+			}
+			_ = encoder
+			_ = value
+		}
+	}
+	if value.Anchors != nil {
+		for seq_i, seq_v := range value.Anchors {
+			pseudoEncoder := &encoder.Anchors_subencoder[seq_i]
+			pseudoValue := struct {
+				Anchors []byte
+			}{
+				Anchors: seq_v,
+			}
+			{
+				encoder := pseudoEncoder
+				value := &pseudoValue
+				if value.Anchors != nil {
+					buf[pos] = 253
+					binary.BigEndian.PutUint16(buf[pos+1:], uint16(442))
+					pos += 3
+					pos += uint(enc.TLNum(len(value.Anchors)).EncodeInto(buf[pos:]))
+					copy(buf[pos:], value.Anchors)
+					pos += uint(len(value.Anchors))
+				}
+				_ = encoder
+				_ = value
+			}
+		}
+	}
+}
+
+func (encoder *SecurityConfigObjectEncoder) Encode(value *SecurityConfigObject) enc.Wire {
+
+	wire := make(enc.Wire, 1)
+	wire[0] = make([]byte, encoder.Length)
+	buf := wire[0]
+	encoder.EncodeInto(value, buf)
+
+	return wire
+}
+
+func (context *SecurityConfigObjectParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*SecurityConfigObject, error) {
+
+	var handled_Schema bool = false
+	var handled_Anchors bool = false
+
+	progress := -1
+	_ = progress
+
+	value := &SecurityConfigObject{}
+	var err error
+	var startPos int
+	for {
+		startPos = reader.Pos()
+		if startPos >= reader.Length() {
+			break
+		}
+		typ := enc.TLNum(0)
+		l := enc.TLNum(0)
+		typ, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+		l, err = reader.ReadTLNum()
+		if err != nil {
+			return nil, enc.ErrFailToParse{TypeNum: 0, Err: err}
+		}
+
+		err = nil
+		if handled := false; true {
+			switch typ {
+			case 421:
+				if true {
+					handled = true
+					handled_Schema = true
+					value.Schema = make([]byte, l)
+					_, err = reader.ReadFull(value.Schema)
+				}
+			case 442:
+				if true {
+					handled = true
+					handled_Anchors = true
+					if value.Anchors == nil {
+						value.Anchors = make([][]byte, 0)
+					}
+					{
+						pseudoValue := struct {
+							Anchors []byte
+						}{}
+						{
+							value := &pseudoValue
+							value.Anchors = make([]byte, l)
+							_, err = reader.ReadFull(value.Anchors)
+							_ = value
+						}
+						value.Anchors = append(value.Anchors, pseudoValue.Anchors)
+					}
+					progress--
+				}
+			default:
+				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
+					return nil, enc.ErrUnrecognizedField{TypeNum: typ}
+				}
+				handled = true
+				err = reader.Skip(int(l))
+			}
+			if err == nil && !handled {
+			}
+			if err != nil {
+				return nil, enc.ErrFailToParse{TypeNum: typ, Err: err}
+			}
+		}
+	}
+
+	startPos = reader.Pos()
+	err = nil
+
+	if !handled_Schema && err == nil {
+		value.Schema = nil
+	}
+	if !handled_Anchors && err == nil {
+		value.Anchors = nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
+}
+
+func (value *SecurityConfigObject) Encode() enc.Wire {
+	encoder := SecurityConfigObjectEncoder{}
+	encoder.Init(value)
+	return encoder.Encode(value)
+}
+
+func (value *SecurityConfigObject) Bytes() []byte {
+	return value.Encode().Join()
+}
+
+func ParseSecurityConfigObject(reader enc.WireView, ignoreCritical bool) (*SecurityConfigObject, error) {
+	context := SecurityConfigObjectParsingContext{}
 	context.Init()
 	return context.Parse(reader, ignoreCritical)
 }
