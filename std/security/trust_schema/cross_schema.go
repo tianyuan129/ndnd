@@ -79,11 +79,11 @@ func (cross *CrossSchemaContent) Match(dataName enc.Name, certName enc.Name) boo
 			continue
 		}
 
-		if !rule.NamePrefix.IsPrefix(dataName) {
+		if !matchNamePattern(rule.NamePrefix, dataName) {
 			continue
 		}
 
-		if rule.KeyLocator.Name.IsPrefix(certName) {
+		if matchNamePattern(rule.KeyLocator.Name, certName) {
 			return true
 		}
 	}
@@ -93,12 +93,12 @@ func (cross *CrossSchemaContent) Match(dataName enc.Name, certName enc.Name) boo
 			continue
 		}
 
-		if !rule.NamePrefix.IsPrefix(dataName) {
+		if !matchNamePattern(rule.NamePrefix, dataName) {
 			continue
 		}
 
 		// /keyName/KEY/kid/iss/ver
-		if certName.Prefix(-4).IsPrefix(dataName[len(rule.NamePrefix):]) {
+		if matchNamePattern(certName.Prefix(-4), dataName[len(rule.NamePrefix):]) {
 			return true
 		}
 	}
@@ -112,10 +112,10 @@ func (cross *CrossSchemaContent) Match(dataName enc.Name, certName enc.Name) boo
 			continue
 		}
 
-		if uint64(len(dataName)) <= rule.NameComponentIndex {
+		if rule.NameComponentIndex >= uint64(len(dataName)) {
 			continue
 		}
-		if uint64(len(certName)) <= rule.KeyComponentIndex {
+		if rule.KeyComponentIndex >= uint64(len(certName)) {
 			continue
 		}
 

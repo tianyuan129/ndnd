@@ -27,11 +27,13 @@ ComponentSchemaRule = COMPONENT-SCHEMA-RULE-TYPE TLV-LENGTH
                       KeyComponentIndex
 
 ; component indices are absolute (relative to the full Data/KeyLocator names)
+; indices are zero-based and MUST be non-negative
 ; NamePrefix and KeyLocator may include "_" to match any single component
 NameComponentIndex = NON-NEGATIVE-INTEGER
 KeyComponentIndex = NON-NEGATIVE-INTEGER
 
 NamePrefix = Name
+; "_" wildcard is allowed in NamePrefix and KeyLocator for all rule types
 
 CROSS-SCHEMA-TYPE = 600
 SIMPLE-SCHEMA-RULE-TYPE = 620
@@ -162,3 +164,5 @@ Content = ComponentSchemaRule {
 1. It captures the 5th component in the full name (index 4) as the producer identifier.
 1. The captured component must equal the second component (index 1) in the certificate name after `/arizona.edu`, e.g., `/arizona.edu/alice/KEY/...`.
 1. If either prefix check fails or the indexed components differ, the rule rejects the signer.
+
+`NameComponentIndex` and `KeyComponentIndex` are zero-based and must be non-negative.
