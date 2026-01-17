@@ -108,7 +108,7 @@ func (cross *CrossSchemaContent) Match(dataName enc.Name, certName enc.Name) boo
 			continue
 		}
 
-		if !rule.NamePrefix.IsPrefix(dataName) || !rule.KeyLocator.Name.IsPrefix(certName) {
+		if !matchNamePattern(rule.NamePrefix, dataName) || !matchNamePattern(rule.KeyLocator.Name, certName) {
 			continue
 		}
 
@@ -127,4 +127,19 @@ func (cross *CrossSchemaContent) Match(dataName enc.Name, certName enc.Name) boo
 	}
 
 	return false
+}
+
+func matchNamePattern(pattern enc.Name, name enc.Name) bool {
+	if len(name) < len(pattern) {
+		return false
+	}
+	for i, comp := range pattern {
+		if comp.IsKeyword("_") || string(comp.Val) == "_" {
+			continue
+		}
+		if !comp.Equal(name[i]) {
+			return false
+		}
+	}
+	return true
 }

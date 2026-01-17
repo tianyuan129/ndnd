@@ -27,6 +27,7 @@ ComponentSchemaRule = COMPONENT-SCHEMA-RULE-TYPE TLV-LENGTH
                       KeyComponentIndex
 
 ; component indices are absolute (relative to the full Data/KeyLocator names)
+; NamePrefix and KeyLocator may include "_" to match any single component
 NameComponentIndex = NON-NEGATIVE-INTEGER
 KeyComponentIndex = NON-NEGATIVE-INTEGER
 
@@ -150,13 +151,14 @@ For example:
 
 ```ini
 Content = ComponentSchemaRule {
-  NamePrefix = /ucla.edu/wksp/collab
-  KeyLocator = /arizona.edu
-  NameComponentIndex = 3
+  NamePrefix = /ucla.edu/wksp/_/collab   ; "_" matches any single component
+  KeyLocator = /arizona.edu/_            ; "_" matches producer id in cert name
+  NameComponentIndex = 4
   KeyComponentIndex = 1
 }
 ```
 
-1. The rule matches Data names that start with `/ucla.edu/wksp/collab/`, then captures the 4th component in the full name (index 3) as the producer identifier.
+1. The rule matches Data names whose first components are `/ucla.edu/wksp/<anything>/collab/...`; `_` is a single-component wildcard.
+1. It captures the 5th component in the full name (index 4) as the producer identifier.
 1. The captured component must equal the second component (index 1) in the certificate name after `/arizona.edu`, e.g., `/arizona.edu/alice/KEY/...`.
 1. If either prefix check fails or the indexed components differ, the rule rejects the signer.

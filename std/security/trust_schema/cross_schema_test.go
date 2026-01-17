@@ -60,14 +60,15 @@ func TestCrossSchemaComponentRuleMatch(t *testing.T) {
 	tu.SetT(t)
 
 	dataName := tu.NoErr(enc.NameFromStr("/app/invite/team/alice/data"))
+	dataPattern := tu.NoErr(enc.NameFromStr("/app/_/team")) // wildcard in the middle
 	certName := tu.NoErr(enc.NameFromStr("/users/alice/KEY/kid/iss/ver"))
 
 	cross := trust_schema.CrossSchemaContent{
 		ComponentSchemaRules: []*trust_schema.ComponentSchemaRule{{
-			NamePrefix:         tu.NoErr(enc.NameFromStr("/app/invite")),
-			KeyLocator:         &spec_2022.KeyLocator{Name: tu.NoErr(enc.NameFromStr("/users"))},
-			NameComponentIndex: 3, // capture "alice" in full data name
-			KeyComponentIndex:  1, // expect it immediately after "/users" in cert name
+			NamePrefix:         dataPattern,
+			KeyLocator:         &spec_2022.KeyLocator{Name: tu.NoErr(enc.NameFromStr("/users/_"))}, // wildcard in cert prefix
+			NameComponentIndex: 3,                                                                  // capture "alice" in full data name
+			KeyComponentIndex:  1,                                                                  // expect it immediately after "/users" in cert name
 		}},
 	}
 
