@@ -55,3 +55,27 @@ func TestSignCrossSchema(t *testing.T) {
 	require.Equal(t, T1.Unix(), nb.Unwrap().Unix())
 	require.Equal(t, T2.Unix(), na.Unwrap().Unix())
 }
+
+func TestCrossSchemaComponentRuleMatch(t *testing.T) {
+	tu.SetT(t)
+
+	dataName := tu.NoErr(enc.NameFromStr("/app/invite/team/alice/data"))
+	certName := tu.NoErr(enc.NameFromStr("/users/alice/KEY/kid/iss/ver"))
+
+	cross := trust_schema.CrossSchemaContent{
+		ComponentSchemaRules: []*trust_schema.ComponentSchemaRule{{
+			NamePrefix:         tu.NoErr(enc.NameFromStr("/app/invite")),
+			KeyLocator:         &spec_2022.KeyLocator{Name: tu.NoErr(enc.NameFromStr("/users"))},
+			NameComponentIndex: 3, // capture "alice" in full data name
+			KeyComponentIndex:  1, // expect it immediately after "/users" in cert name
+		}},
+	}
+
+	require.True(t, cross.Match(dataName, certName))
+
+	mismatchCert := tu.NoErr(enc.NameFromStr("/users/bob/KEY/kid/iss/ver"))
+	require.False(t, cross.Match(dataName, mismatchCert))
+
+	shortName := tu.NoErr(enc.NameFromStr("/app/invite/team"))
+	require.False(t, cross.Match(shortName, certName))
+}

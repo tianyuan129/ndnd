@@ -712,6 +712,53 @@ func testTrustConfigIntra(t *testing.T, schema ndn.TrustSchema) {
 		crossSchema: apInvite,
 	}))
 
+	// Component-based rule: capture producer id between prefix and key name
+	acCollabInvite, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
+		Name:   sname("/test/alice/32=INVITE/test/component/v=1"),
+		Signer: aliceSigner,
+		Content: trust_schema.CrossSchemaContent{
+			ComponentSchemaRules: []*trust_schema.ComponentSchemaRule{{
+				NamePrefix:         sname("/test/alice/app/test"),
+				KeyLocator:         &spec.KeyLocator{Name: sname("/test")},
+				NameComponentIndex: 4, // /test alice app test bob -> capture "bob"
+				KeyComponentIndex:  1, // /test bob KEY...
+			}},
+		},
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(time.Hour),
+	})
+	require.NoError(t, err)
+
+	// Bob cannot sign in alice namespace without the cross schema
+	require.False(t, validateSync(ValidateSyncOptions{
+		name:   "/test/alice/app/test/bob/component1",
+		signer: bobSigner,
+	}))
+
+	// Bob and Cathy can publish if their id appears in the captured position
+	require.True(t, validateSync(ValidateSyncOptions{
+		name:        "/test/alice/app/test/bob/component1",
+		signer:      bobSigner,
+		crossSchema: acCollabInvite,
+	}))
+	require.True(t, validateSync(ValidateSyncOptions{
+		name:        "/test/alice/app/test/cathy/component2",
+		signer:      cathySigner,
+		crossSchema: acCollabInvite,
+	}))
+
+	// Mismatched captured component is rejected
+	require.False(t, validateSync(ValidateSyncOptions{
+		name:        "/test/alice/app/test/cathy/component2",
+		signer:      bobSigner,
+		crossSchema: acCollabInvite,
+	}))
+	require.False(t, validateSync(ValidateSyncOptions{
+		name:        "/test/alice/app/test",
+		signer:      cathySigner,
+		crossSchema: acCollabInvite,
+	}))
+
 	// Malicious cross schema created by bob for bob
 	bobMCross, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
 		Name:   sname("/test/alice/32=INVITE/test/bob/v=1"),

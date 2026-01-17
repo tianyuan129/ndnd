@@ -103,5 +103,28 @@ func (cross *CrossSchemaContent) Match(dataName enc.Name, certName enc.Name) boo
 		}
 	}
 
+	for _, rule := range cross.ComponentSchemaRules {
+		if rule == nil || rule.NamePrefix == nil || rule.KeyLocator == nil || rule.KeyLocator.Name == nil {
+			continue
+		}
+
+		if !rule.NamePrefix.IsPrefix(dataName) || !rule.KeyLocator.Name.IsPrefix(certName) {
+			continue
+		}
+
+		if uint64(len(dataName)) <= rule.NameComponentIndex {
+			continue
+		}
+		if uint64(len(certName)) <= rule.KeyComponentIndex {
+			continue
+		}
+
+		dataComp := dataName[int(rule.NameComponentIndex)]
+		certComp := certName[int(rule.KeyComponentIndex)]
+		if dataComp.Equal(certComp) {
+			return true
+		}
+	}
+
 	return false
 }
